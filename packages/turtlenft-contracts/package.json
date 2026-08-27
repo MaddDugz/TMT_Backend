@@ -1,0 +1,12 @@
+{
+  "name": "@kingtony36/turtlenft-contracts",
+  "version": "1.0.8",
+  "description": "ABIs for the TurtleNFT contracts",
+  "main": "index.js",
+  "license": "MIT",
+  "files": ["index.js", "abis"],
+
+    "publishConfig": {
+    "access": "public"
+  }
+}
