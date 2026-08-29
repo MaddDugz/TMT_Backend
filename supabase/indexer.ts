@@ -5,7 +5,7 @@ import { supabase } from "./client";
 import { getLastProcessedBlock, saveLastProcessedBlock } from "./syncShared.ts";
 import FaucetTokenArtifact from "../artifacts/contracts/FaucetToken.sol/FaucetToken.json" assert { type: "json" };
 
-const RPC_URL = process.env.RPC_URL || "http://127.0.0.1:8545";
+const RPC_URL = process.env.SEPOLIA_RPC_URL
 const POLL_INTERVAL_MS = 15_000; // check every 15 seconds
 const SYNC_ID = "faucet-claims-sync"; // a name for this listener's progress row
 
