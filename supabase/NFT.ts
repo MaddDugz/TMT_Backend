@@ -12,7 +12,7 @@ const SYNC_ID = "nft-contract-sync";
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const NFT = new ethers.Contract(NFTaddress, NFTartifacts.abi, provider);
 
-const GRADE_NAMES = ["Free, Bronze", "Silver", "Gold"] as const;
+const GRADE_NAMES = ["Free", "Bronze", "Silver", "Gold"] as const;
 function gradeToName(index: number): string {
   return GRADE_NAMES[Number(index)] ?? "Unknown";
 }
