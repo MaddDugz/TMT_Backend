@@ -102,7 +102,7 @@ console.log("Backlog:", currentBlock - lastProcessed);
   const toBlock = currentBlock;
 
   const filter = faucetToken.filters.TokensClaimed();
- const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock);
+ const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock, 5);
 
   for (const event of events) {
     // event.args holds the same values your old (user, amount, timestamp) did
