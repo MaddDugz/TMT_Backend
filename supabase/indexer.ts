@@ -17,6 +17,12 @@ const faucetToken = new ethers.Contract(
   provider
 );
 
+type ParsedEvent = ethers.LogDescription & {
+  transactionHash: string;
+  blockNumber: number;
+  index: number;
+};
+
 console.log(`Polling for TokensClaimed events on ${process.env.FAUCET_TOKEN_ADDRESS}...`);
 
 async function getLogsInChunks(
@@ -25,12 +31,12 @@ async function getLogsInChunks(
   filter: ethers.DeferredTopicFilter,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 10
-) {
-  const allEvents: ethers.LogDescription[] = [];
+  chunkSize = 10,
+   delayMs = 250 // small pause between chunk requests
+) : Promise<ParsedEvent[]>{
 
-  // filter.getTopicFilter() resolves the filter into actual address/topics
-  const resolvedFilter = await contract.filters[filter.fragment.name]().getTopicFilter();
+  const allEvents: ParsedEvent[] = [];
+  const resolvedFilter = await filter.getTopicFilter();
 
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
     const end = Math.min(start + chunkSize - 1, toBlock);
@@ -44,7 +50,18 @@ async function getLogsInChunks(
 
     for (const log of logs) {
       const parsed = contract.interface.parseLog(log);
-      if (parsed) allEvents.push({...parsed, log});
+      if (parsed) {
+        allEvents.push({
+          ...parsed,
+          transactionHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+          index: log.index,
+        } as ParsedEvent);
+      }
+    }
+
+    if (start + chunkSize <= toBlock) {
+      await new Promise((r) => setTimeout(r, delayMs)); // pace requests
     }
   }
 
