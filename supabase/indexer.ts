@@ -95,8 +95,6 @@ async function checkForNewClaims() {
     return; // no new blocks since last check
   }
 
-console.log("Backlog:", currentBlock - lastProcessed);
-
 
   const fromBlock = lastProcessed + 1;
   const toBlock = currentBlock;
