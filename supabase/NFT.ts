@@ -17,6 +17,76 @@ function gradeToName(index: number): string {
   return GRADE_NAMES[Number(index)] ?? "Unknown";
 }
 
+// Merged shape: decoded args + the raw log metadata (transactionHash, blockNumber, index)
+// that parseLog() alone doesn't give you — this keeps event.transactionHash etc. working
+// exactly like it did with queryFilter's EventLog.
+
+type ParsedEvent = ethers.LogDescription & {
+  transactionHash: string;
+  blockNumber: number;
+  index: number;
+};
+
+async function getLogsWithRetry(provider: ethers.JsonRpcProvider, params: any, maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await provider.getLogs(params);
+    } catch (err: any) {
+      const is429 = err?.error?.code === 429;
+      if (is429 && attempt < maxRetries) {
+        const wait = 500 * attempt;
+        console.warn(`Rate limited, retrying in ${wait}ms (attempt ${attempt})`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("getLogsWithRetry: exhausted retries");
+}
+
+async function getLogsInChunks(
+  provider: ethers.JsonRpcProvider,
+  contract: ethers.Contract,
+  filter: ethers.DeferredTopicFilter,
+  fromBlock: number,
+  toBlock: number,
+  chunkSize = 10,
+  delayMs = 250
+): Promise<ParsedEvent[]> {
+  const allEvents: ParsedEvent[] = [];
+  const resolvedFilter = await filter.getTopicFilter();
+
+  for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+    const end = Math.min(start + chunkSize - 1, toBlock);
+
+    const logs = await getLogsWithRetry(provider, {
+      address: await contract.getAddress(),
+      topics: resolvedFilter,
+      fromBlock: start,
+      toBlock: end,
+    });
+
+    for (const log of logs ?? []) {
+      const parsed = contract.interface.parseLog(log);
+      if (parsed) {
+        allEvents.push({
+          ...parsed,
+          transactionHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+          index: log.index,
+        } as ParsedEvent);
+      }
+    }
+
+    if (start + chunkSize <= toBlock) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+
+  return allEvents;
+}
+
 console.log(`Polling for NFT contract events on ${NFTaddress}`);
 
 async function checkForNewEvents() {
@@ -27,20 +97,17 @@ async function checkForNewEvents() {
   const fromBlock = lastProcessed + 1;
   const toBlock = currentBlock;
 
-  const [created, priceUpdated, minted, transfers] = await Promise.all([
-    NFT.queryFilter(NFT.filters.NFTCreated(), fromBlock, toBlock),
-    NFT.queryFilter(NFT.filters.NFTPriceUpdated(), fromBlock, toBlock),
-    NFT.queryFilter(NFT.filters.NFTMinted(), fromBlock, toBlock),
-    NFT.queryFilter(NFT.filters.Transfer(), fromBlock, toBlock),
-  ]);
+const created = await getLogsInChunks(provider, NFT, NFT.filters.NFTCreated(), fromBlock, toBlock);
+const priceUpdated = await getLogsInChunks(provider, NFT, NFT.filters.NFTPriceUpdated(), fromBlock, toBlock);
+const minted = await getLogsInChunks(provider, NFT, NFT.filters.NFTMinted(), fromBlock, toBlock);
+const transfers = await getLogsInChunks(provider, NFT, NFT.filters.Transfer(), fromBlock, toBlock);
 
-  // Merge all 4 lists and sort by when they happened, so e.g. a mint
-  // is handled before a transfer that occurred right after it
+
   const tagged = [
-    ...created.map((e) => ({ type: "NFTCreated" as const, event: e as ethers.EventLog })),
-    ...priceUpdated.map((e) => ({ type: "NFTPriceUpdated" as const, event: e as ethers.EventLog })),
-    ...minted.map((e) => ({ type: "NFTMinted" as const, event: e as ethers.EventLog })),
-    ...transfers.map((e) => ({ type: "Transfer" as const, event: e as ethers.EventLog })),
+    ...created.map((e) => ({ type: "NFTCreated" as const, event: e })),
+    ...priceUpdated.map((e) => ({ type: "NFTPriceUpdated" as const, event: e })),
+    ...minted.map((e) => ({ type: "NFTMinted" as const, event: e })),
+    ...transfers.map((e) => ({ type: "Transfer" as const, event: e })),
   ].sort((a, b) =>
     a.event.blockNumber !== b.event.blockNumber
       ? a.event.blockNumber - b.event.blockNumber
@@ -61,7 +128,7 @@ async function checkForNewEvents() {
   await saveLastProcessedBlock(supabase, SYNC_ID, toBlock);
 }
 
-async function handleNFTCreated(event: ethers.EventLog) {
+async function handleNFTCreated(event: ParsedEvent) {
   const [type_id, grade, quantity, metadataURI] = event.args;
   const gradeName = gradeToName(Number(grade));
   console.log(`New NFT created of price ${gradeName} and quantity ${quantity}`);
@@ -78,7 +145,7 @@ async function handleNFTCreated(event: ethers.EventLog) {
   );
 }
 
-async function handleNFTPriceUpdated(event: ethers.EventLog) {
+async function handleNFTPriceUpdated(event: ParsedEvent) {
   const [grade, price] = event.args;
   const gradeName = gradeToName(Number(grade));
 
@@ -99,7 +166,7 @@ async function handleNFTPriceUpdated(event: ethers.EventLog) {
   }
 }
 
-async function handleNFTMinted(event: ethers.EventLog) {
+async function handleNFTMinted(event: ParsedEvent) {
   const [user, type_id, remainingQuantity, mintedIds, amount] = event.args;
   console.log(`New mint from ${user}: ${amount} NFT(s), IDs: ${mintedIds}`);
 
@@ -124,7 +191,7 @@ async function handleNFTMinted(event: ethers.EventLog) {
   if (error) console.error(`Error updating quantity for type_id ${type_id}:`, error.message);
 }
 
-async function handleTransfer(event: ethers.EventLog) {
+async function handleTransfer(event: ParsedEvent) {
   const [from, to, tokenId] = event.args;
 
   if (from === "0x0000000000000000000000000000000000000000") return; // mint, already handled above
