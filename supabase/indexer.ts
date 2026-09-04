@@ -25,6 +25,24 @@ type ParsedEvent = ethers.LogDescription & {
 
 console.log(`Polling for TokensClaimed events on ${process.env.FAUCET_TOKEN_ADDRESS}...`);
 
+async function getLogsWithRetry(provider: ethers.JsonRpcProvider, params: any, maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await provider.getLogs(params);
+    } catch (err: any) {
+      const is429 = err?.error?.code === 429;
+      if (is429 && attempt < maxRetries) {
+        const wait = 500 * attempt;
+        console.warn(`Rate limited, retrying in ${wait}ms (attempt ${attempt})`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("getLogsWithRetry: exhausted retries");
+}
+
 async function getLogsInChunks(
   provider: ethers.JsonRpcProvider,
   contract: ethers.Contract,
@@ -32,23 +50,22 @@ async function getLogsInChunks(
   fromBlock: number,
   toBlock: number,
   chunkSize = 10,
-   delayMs = 250 // small pause between chunk requests
-) : Promise<ParsedEvent[]>{
-
+  delayMs = 250
+): Promise<ParsedEvent[]> {
   const allEvents: ParsedEvent[] = [];
   const resolvedFilter = await filter.getTopicFilter();
 
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
     const end = Math.min(start + chunkSize - 1, toBlock);
 
-    const logs = await provider.getLogs({
+    const logs = await getLogsWithRetry(provider, {
       address: await contract.getAddress(),
       topics: resolvedFilter,
       fromBlock: start,
       toBlock: end,
     });
 
-    for (const log of logs) {
+    for (const log of logs ?? []) {
       const parsed = contract.interface.parseLog(log);
       if (parsed) {
         allEvents.push({
@@ -61,7 +78,7 @@ async function getLogsInChunks(
     }
 
     if (start + chunkSize <= toBlock) {
-      await new Promise((r) => setTimeout(r, delayMs)); // pace requests
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
 
