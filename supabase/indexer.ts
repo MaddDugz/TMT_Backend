@@ -49,8 +49,8 @@ async function getLogsInChunks(
   filter: ethers.DeferredTopicFilter,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 10,
-  delayMs = 250
+  chunkSize = 5,
+  delayMs = 400
 ): Promise<ParsedEvent[]> {
   const allEvents: ParsedEvent[] = [];
   const resolvedFilter = await filter.getTopicFilter();
@@ -100,7 +100,7 @@ async function checkForNewClaims() {
   const toBlock = currentBlock;
 
   const filter = faucetToken.filters.TokensClaimed();
- const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock, 5);
+ const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock,);
 
   for (const event of events) {
     // event.args holds the same values your old (user, amount, timestamp) did

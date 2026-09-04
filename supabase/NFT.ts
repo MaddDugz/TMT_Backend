@@ -51,8 +51,8 @@ async function getLogsInChunks(
   filter: ethers.DeferredTopicFilter,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 10,
-  delayMs = 250
+  chunkSize = 5,
+  delayMs = 400
 ): Promise<ParsedEvent[]> {
   const allEvents: ParsedEvent[] = [];
   const resolvedFilter = await filter.getTopicFilter();
@@ -97,10 +97,10 @@ async function checkForNewEvents() {
   const fromBlock = lastProcessed + 1;
   const toBlock = currentBlock;
 
-const created = await getLogsInChunks(provider, NFT, NFT.filters.NFTCreated(), fromBlock, toBlock, 5);
-const priceUpdated = await getLogsInChunks(provider, NFT, NFT.filters.NFTPriceUpdated(), fromBlock, toBlock, 5);
-const minted = await getLogsInChunks(provider, NFT, NFT.filters.NFTMinted(), fromBlock, toBlock, 5);
-const transfers = await getLogsInChunks(provider, NFT, NFT.filters.Transfer(), fromBlock, toBlock, 5);
+const created = await getLogsInChunks(provider, NFT, NFT.filters.NFTCreated(), fromBlock, toBlock,);
+const priceUpdated = await getLogsInChunks(provider, NFT, NFT.filters.NFTPriceUpdated(), fromBlock, toBlock,);
+const minted = await getLogsInChunks(provider, NFT, NFT.filters.NFTMinted(), fromBlock, toBlock,);
+const transfers = await getLogsInChunks(provider, NFT, NFT.filters.Transfer(), fromBlock, toBlock,);
 
 
   const tagged = [
