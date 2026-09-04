@@ -19,6 +19,38 @@ const faucetToken = new ethers.Contract(
 
 console.log(`Polling for TokensClaimed events on ${process.env.FAUCET_TOKEN_ADDRESS}...`);
 
+async function getLogsInChunks(
+  provider: ethers.JsonRpcProvider,
+  contract: ethers.Contract,
+  filter: ethers.DeferredTopicFilter,
+  fromBlock: number,
+  toBlock: number,
+  chunkSize = 10
+) {
+  const allEvents: ethers.LogDescription[] = [];
+
+  // filter.getTopicFilter() resolves the filter into actual address/topics
+  const resolvedFilter = await contract.filters[filter.fragment.name]().getTopicFilter();
+
+  for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+    const end = Math.min(start + chunkSize - 1, toBlock);
+
+    const logs = await provider.getLogs({
+      address: await contract.getAddress(),
+      topics: resolvedFilter,
+      fromBlock: start,
+      toBlock: end,
+    });
+
+    for (const log of logs) {
+      const parsed = contract.interface.parseLog(log);
+      if (parsed) allEvents.push({...parsed, log});
+    }
+  }
+
+  return allEvents;
+}
+
 
 async function checkForNewClaims() {
   const lastProcessed = await getLastProcessedBlock(supabase, provider, SYNC_ID);
@@ -32,18 +64,18 @@ async function checkForNewClaims() {
   const toBlock = currentBlock;
 
   const filter = faucetToken.filters.TokensClaimed();
-  const events = await faucetToken.queryFilter(filter, fromBlock, toBlock);
+ const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock);
 
   for (const event of events) {
     // event.args holds the same values your old (user, amount, timestamp) did
-    const [user, amount, timestamp] = (event as ethers.EventLog).args;
+      const [user, amount, timestamp] = event.args;
 
     console.log(`New claim from ${user}: ${amount.toString()}`);
 
     await insertClaimWithRetry({
       wallet_address: user,
       amount: amount.toString(),
-      tx_hash: event.transactionHash,
+      tx_hash: event.log.transactionHash,
       claimed_at: new Date(Number(timestamp) * 1000).toISOString(),
     });
   }
