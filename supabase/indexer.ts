@@ -86,6 +86,7 @@ async function getLogsInChunks(
 }
 
 
+
 async function checkForNewClaims() {
   const lastProcessed = await getLastProcessedBlock(supabase, provider, SYNC_ID);
   const currentBlock = await provider.getBlockNumber();
@@ -93,6 +94,9 @@ async function checkForNewClaims() {
   if (currentBlock <= lastProcessed) {
     return; // no new blocks since last check
   }
+
+console.log("Backlog:", currentBlock - lastProcessed);
+
 
   const fromBlock = lastProcessed + 1;
   const toBlock = currentBlock;
