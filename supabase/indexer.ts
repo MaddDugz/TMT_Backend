@@ -126,6 +126,7 @@ async function checkForNewClaims() {
   await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock, async (lastBlockDone) => {
   await saveLastProcessedBlock(supabase, SYNC_ID, lastBlockDone);
 });
+}
 
 async function insertClaimWithRetry(claimData: any, maxRetries = 3) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
