@@ -49,8 +49,9 @@ async function getLogsInChunks(
   filter: ethers.DeferredTopicFilter,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 5,
-  delayMs = 400
+  onChunkDone: (lastBlockDone: number) => Promise<void>,
+  chunkSize = 1000,
+  delayMs = 200
 ): Promise<ParsedEvent[]> {
   const allEvents: ParsedEvent[] = [];
   const resolvedFilter = await filter.getTopicFilter();
@@ -76,6 +77,7 @@ async function getLogsInChunks(
         } as ParsedEvent);
       }
     }
+    await onChunkDone(end)
 
     if (start + chunkSize <= toBlock) {
       await new Promise((r) => setTimeout(r, delayMs));
@@ -102,7 +104,10 @@ async function checkForNewClaims() {
   const toBlock = currentBlock;
 
   const filter = faucetToken.filters.TokensClaimed();
- const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock,);
+
+  const events = await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock, async (lastBlockDone) => {
+  await saveLastProcessedBlock(supabase, SYNC_ID, lastBlockDone);
+});
 
   for (const event of events) {
     // event.args holds the same values your old (user, amount, timestamp) did
@@ -113,13 +118,14 @@ async function checkForNewClaims() {
     await insertClaimWithRetry({
       wallet_address: user,
       amount: amount.toString(),
-      tx_hash: event.log.transactionHash,
+      tx_hash: event.transactionHash,
       claimed_at: new Date(Number(timestamp) * 1000).toISOString(),
     });
   }
 
-  await saveLastProcessedBlock(supabase, SYNC_ID, toBlock);
-}
+  await getLogsInChunks(provider, faucetToken, filter, fromBlock, toBlock, async (lastBlockDone) => {
+  await saveLastProcessedBlock(supabase, SYNC_ID, lastBlockDone);
+});
 
 async function insertClaimWithRetry(claimData: any, maxRetries = 3) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -139,4 +145,4 @@ async function insertClaimWithRetry(claimData: any, maxRetries = 3) {
 checkForNewClaims().catch((err) => console.error("Poll error:", err));
 setInterval(() => {
   checkForNewClaims().catch((err) => console.error("Poll error:", err));
-}, POLL_INTERVAL_MS);
+}, POLL_INTERVAL_MS)
