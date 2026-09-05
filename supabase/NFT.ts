@@ -17,22 +17,20 @@ function gradeToName(index: number): string {
   return GRADE_NAMES[Number(index)] ?? "Unknown";
 }
 
-// Merged shape: decoded args + the raw log metadata (transactionHash, blockNumber, index)
-// that parseLog() alone doesn't give you — this keeps event.transactionHash etc. working
-// exactly like it did with queryFilter's EventLog.
-
 type ParsedEvent = ethers.LogDescription & {
   transactionHash: string;
   blockNumber: number;
   index: number;
 };
 
+const WATCHED_EVENTS = ["NFTCreated", "NFTPriceUpdated", "NFTMinted", "Transfer"];
+
 async function getLogsWithRetry(provider: ethers.JsonRpcProvider, params: any, maxRetries = 5) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await provider.getLogs(params);
     } catch (err: any) {
-      const is429 = err?.error?.code === 429;
+      const is429 = err?.error?.code === 429 || err?.info?.error?.code === -32003;
       if (is429 && attempt < maxRetries) {
         const wait = 500 * attempt;
         console.warn(`Rate limited, retrying in ${wait}ms (attempt ${attempt})`);
@@ -45,31 +43,28 @@ async function getLogsWithRetry(provider: ethers.JsonRpcProvider, params: any, m
   throw new Error("getLogsWithRetry: exhausted retries");
 }
 
-async function getLogsInChunks(
+// Single combined pass over all 4 event types (address-only filter, no topics),
+// checkpointing progress after every chunk so a crash mid-scan doesn't wipe it out.
+async function getAllLogsInChunks(
   provider: ethers.JsonRpcProvider,
   contract: ethers.Contract,
-  filter: ethers.DeferredTopicFilter,
   fromBlock: number,
   toBlock: number,
-  chunkSize = 5,
-  delayMs = 400
+  onChunkDone: (lastBlockDone: number) => Promise<void>,
+  chunkSize = 1000,
+  delayMs = 200
 ): Promise<ParsedEvent[]> {
   const allEvents: ParsedEvent[] = [];
-  const resolvedFilter = await filter.getTopicFilter();
+  const address = await contract.getAddress();
 
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
     const end = Math.min(start + chunkSize - 1, toBlock);
 
-    const logs = await getLogsWithRetry(provider, {
-      address: await contract.getAddress(),
-      topics: resolvedFilter,
-      fromBlock: start,
-      toBlock: end,
-    });
+    const logs = await getLogsWithRetry(provider, { address, fromBlock: start, toBlock: end });
 
     for (const log of logs ?? []) {
       const parsed = contract.interface.parseLog(log);
-      if (parsed) {
+      if (parsed && WATCHED_EVENTS.includes(parsed.name)) {
         allEvents.push({
           ...parsed,
           transactionHash: log.transactionHash,
@@ -78,6 +73,9 @@ async function getLogsInChunks(
         } as ParsedEvent);
       }
     }
+
+    // Persist progress after each chunk — not just at the very end
+    await onChunkDone(end);
 
     if (start + chunkSize <= toBlock) {
       await new Promise((r) => setTimeout(r, delayMs));
@@ -98,22 +96,25 @@ async function checkForNewEvents() {
   const fromBlock = lastProcessed + 1;
   const toBlock = currentBlock;
 
-const created = await getLogsInChunks(provider, NFT, NFT.filters.NFTCreated(), fromBlock, toBlock,);
-const priceUpdated = await getLogsInChunks(provider, NFT, NFT.filters.NFTPriceUpdated(), fromBlock, toBlock,);
-const minted = await getLogsInChunks(provider, NFT, NFT.filters.NFTMinted(), fromBlock, toBlock,);
-const transfers = await getLogsInChunks(provider, NFT, NFT.filters.Transfer(), fromBlock, toBlock,);
-
-
-  const tagged = [
-    ...created.map((e) => ({ type: "NFTCreated" as const, event: e })),
-    ...priceUpdated.map((e) => ({ type: "NFTPriceUpdated" as const, event: e })),
-    ...minted.map((e) => ({ type: "NFTMinted" as const, event: e })),
-    ...transfers.map((e) => ({ type: "Transfer" as const, event: e })),
-  ].sort((a, b) =>
-    a.event.blockNumber !== b.event.blockNumber
-      ? a.event.blockNumber - b.event.blockNumber
-      : a.event.index - b.event.index
+  const allLogs = await getAllLogsInChunks(
+    provider,
+    NFT,
+    fromBlock,
+    toBlock,
+    async (lastBlockDone) => {
+      await saveLastProcessedBlock(supabase, SYNC_ID, lastBlockDone);
+    }
   );
+
+  // Logs come back already ordered by block/logIndex within each chunk,
+  // but re-sort defensively since we no longer merge 4 separately-fetched arrays.
+  const tagged = allLogs
+    .map((e) => ({ type: e.name as (typeof WATCHED_EVENTS)[number], event: e }))
+    .sort((a, b) =>
+      a.event.blockNumber !== b.event.blockNumber
+        ? a.event.blockNumber - b.event.blockNumber
+        : a.event.index - b.event.index
+    );
 
   for (const { type, event } of tagged) {
     try {
@@ -125,8 +126,6 @@ const transfers = await getLogsInChunks(provider, NFT, NFT.filters.Transfer(), f
       console.error(`Error handling ${type} event:`, err);
     }
   }
-
-  await saveLastProcessedBlock(supabase, SYNC_ID, toBlock);
 }
 
 async function handleNFTCreated(event: ParsedEvent) {
