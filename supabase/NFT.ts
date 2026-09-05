@@ -92,6 +92,7 @@ console.log(`Polling for NFT contract events on ${NFTaddress}`);
 async function checkForNewEvents() {
   const lastProcessed = await getLastProcessedBlock(supabase, provider, SYNC_ID);
   const currentBlock = await provider.getBlockNumber();
+  console.log(`Last processed block: ${lastProcessed}, current block: ${currentBlock}`);
   if (currentBlock <= lastProcessed) return;
 
   const fromBlock = lastProcessed + 1;

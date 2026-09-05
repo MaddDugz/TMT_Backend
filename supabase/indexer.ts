@@ -8,7 +8,6 @@ import FaucetTokenArtifact from "../artifacts/contracts/FaucetToken.sol/FaucetTo
 const RPC_URL = process.env.SEPOLIA_RPC_URL
 const POLL_INTERVAL_MS = 15_000; // check every 15 seconds
 const SYNC_ID = "faucet-claims-sync"; // a name for this listener's progress row
-let counter = 0;
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
@@ -30,7 +29,6 @@ async function getLogsWithRetry(provider: ethers.JsonRpcProvider, params: any, m
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await provider.getLogs(params);
-      console.log(counter++);
     } catch (err: any) {
       const is429 = err?.error?.code === 429;
       if (is429 && attempt < maxRetries) {
@@ -92,6 +90,8 @@ async function getLogsInChunks(
 async function checkForNewClaims() {
   const lastProcessed = await getLastProcessedBlock(supabase, provider, SYNC_ID);
   const currentBlock = await provider.getBlockNumber();
+
+  console.log(`Last processed block: ${lastProcessed}, current block: ${currentBlock}`);
 
   if (currentBlock <= lastProcessed) {
     return; // no new blocks since last check
